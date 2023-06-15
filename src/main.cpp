@@ -5,6 +5,26 @@
 
 //STR->MUST DO: Comment line 94, 95, 96 and 97 in nrf.h by clicking on Arduino.h and then in line 10 clicking on nrf.h. By doing this, the microbit v2 pinout is correct
 
+/*
+    - EDF_task struct
+        - Deadline
+        - Period
+        - Task handler
+        - Task priority
+
+    - EDF_task queue
+
+    - EDF scheduler task (highest priority)
+*/
+
+typedef struct EDF_task
+{
+    unsigned long deadline;
+    unsigned long period;
+    TaskHandle_t task_handler;
+    int task_priority;
+} EDF_task;
+
 #define END_SCHEDULER 10000//Time to stop the kernel in milliseconds
 
 #define T1 50//Task periods in milliseconds
@@ -47,7 +67,7 @@ float debug_data1[BUFF_SIZE] = {};
 unsigned int circ_buffer_counter = 0;
 
 //tasks handlers, required in last parameter of xTaskCreate when accessing task info
-TaskHandle_t Task1Handle;
+TaskHandle_t EDFHandle;
 TaskHandle_t Task2Handle;
 TaskHandle_t Task3Handle;
 TaskHandle_t Task4Handle;
@@ -64,7 +84,7 @@ TimerHandle_t xAperiodicJob1Timer;
 BaseType_t xAperiodicJob1Started;
 
 // define tasks and timers prototypes
-void Task1( void *pvParameters );
+void edf( void *pvParameters );
 void Task2( void *pvParameters );
 void Task3( void *pvParameters );
 void Task4( void *pvParameters );
@@ -93,12 +113,15 @@ void setup()
 
 	// Serial.begin(115200);
 	Serial.begin(9600);
+
+    str_compute(1000); // delay to feo para hacer que le dé tiempo al monitor a abrirse.
+
 	Serial.println("Init...");
 
 	xOneShotTimer = xTimerCreate("OneShotTimer",   pdMS_TO_TICKS(END_SCHEDULER) , pdFALSE, 0, OneShotTimerCallback );
 	xOneShotStarted = xTimerStart( xOneShotTimer, 0 );
 
-	xTaskCreate(Task1,"Task1", configMINIMAL_STACK_SIZE, NULL, 5, &Task1Handle);
+	xTaskCreate(edf,"EDF", configMINIMAL_STACK_SIZE, NULL, configMAX_PRIORITIES-1, &EDFHandle);
 	xTaskCreate(Task2,"Task2", configMINIMAL_STACK_SIZE, NULL, 4, &Task2Handle);
 	xTaskCreate(Task3,"Task3", configMINIMAL_STACK_SIZE, NULL, 3, &Task3Handle);
 	xTaskCreate(Task4,"Task4", configMINIMAL_STACK_SIZE, NULL, 2, &Task4Handle);
@@ -113,7 +136,7 @@ void loop()
 	;
 }
 
-void Task1(void *pvParameters)  // This is a task.
+void edf(void *pvParameters)  // This is a task.
 {
 	(void) pvParameters;
 
@@ -191,7 +214,7 @@ void str_trace(void)
 	  }
 
 	  t[circ_buffer_counter] = str_getTime();//sent time in milliseconds
-	  circ_buffer1[circ_buffer_counter] = eTaskGetState(Task1Handle);
+	  circ_buffer1[circ_buffer_counter] = eTaskGetState(EDFHandle);
 	  circ_buffer2[circ_buffer_counter] = eTaskGetState(Task2Handle);
 	  circ_buffer3[circ_buffer_counter] = eTaskGetState(Task3Handle);
 	  circ_buffer4[circ_buffer_counter] = eTaskGetState(Task4Handle);
