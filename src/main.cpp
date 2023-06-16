@@ -17,25 +17,40 @@
     - EDF scheduler task (highest priority)
 */
 
+#define NUM_TASKS 4
+
 typedef struct EDF_task
 {
-    unsigned long deadline;
-    unsigned long period;
-    TaskHandle_t task_handler;
-    int task_priority;
+    TickType_t deadline;
+    TaskHandle_t handle;
+    unsigned long priority;
+    void (*task)(void *pvParameters);
+    char name[10];
 } EDF_task;
+
+EDF_task tasks[NUM_TASKS];
 
 #define END_SCHEDULER 10000//Time to stop the kernel in milliseconds
 
-#define T1 50//Task periods in milliseconds
-#define T2 100
-#define T3 200
-#define T4 500
+#define EDF 10 //EDF scheduler period
+
+//Task periods and deadline in milliseconds
+#define T1_P 20 
+#define T1_D 15
+
+#define T2_P 50
+#define T2_D 35
+
+#define T3_P 100
+#define T3_D 90
+
+#define T4_P 150
+#define T4_D 150
 
 #define C1 5//computing times in milliseconds
 #define C2 10
-#define C3 15
-#define C4 20
+#define C3 25
+#define C4 30
 
 #define COL1 4
 #define LED11 21 
@@ -68,6 +83,8 @@ unsigned int circ_buffer_counter = 0;
 
 //tasks handlers, required in last parameter of xTaskCreate when accessing task info
 TaskHandle_t EDFHandle;
+
+TaskHandle_t Task1Handle;
 TaskHandle_t Task2Handle;
 TaskHandle_t Task3Handle;
 TaskHandle_t Task4Handle;
@@ -85,6 +102,7 @@ BaseType_t xAperiodicJob1Started;
 
 // define tasks and timers prototypes
 void edf( void *pvParameters );
+void Task1( void *pvParameters );
 void Task2( void *pvParameters );
 void Task3( void *pvParameters );
 void Task4( void *pvParameters );
@@ -94,6 +112,71 @@ void OneShotTimerCallback( TimerHandle_t xTimer );
 void str_trace(void);
 void str_compute(unsigned long);
 float str_getTime(void);
+
+unsigned long calculateTaskPriority(TickType_t deadline, TickType_t maxDeadline) {
+    // Calculate the priority as a proportion of the maximum deadline
+    unsigned long priority = (unsigned long)((deadline * (configMAX_PRIORITIES - 1)) / maxDeadline);
+    if (priority == configMAX_PRIORITIES-1) {
+        priority--;
+    }
+    
+    // Adjust the priority to fit within the valid range
+    priority = configMAX_PRIORITIES - priority - 1;
+    
+    return priority;
+}
+
+TickType_t calculateMaxDeadline() {
+    TickType_t maxDeadline = 0;
+    for (int i = 0; i < NUM_TASKS; i++) {
+        if (tasks[i].deadline > maxDeadline) {
+            maxDeadline = tasks[i].deadline;
+        }
+    }
+
+    return maxDeadline;
+}
+
+void setTasksPriorities() {
+    // Calculate the maximum deadline
+    TickType_t maxDeadline = calculateMaxDeadline();
+
+    // Calculate the priority for each task
+    for (int i = 0; i < NUM_TASKS; i++) {
+        tasks[i].priority = calculateTaskPriority(tasks[i].deadline, maxDeadline);
+    }
+}
+
+int compareTasks(const void *a, const void *b) {
+    EDF_task *taskA = (EDF_task *)a;
+    EDF_task *taskB = (EDF_task *)b;
+
+    if (taskA->deadline < taskB->deadline) {
+        return -1;
+    } else if (taskA->deadline > taskB->deadline) {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+void sortTasks() {
+    qsort(tasks, NUM_TASKS, sizeof(EDF_task), compareTasks);
+}
+
+void initTasks() {
+    tasks[0] = (EDF_task){T1_D, Task1Handle, 0, Task1, "Task1"};
+    tasks[1] = (EDF_task){T2_D, Task2Handle, 0, Task2, "Task2"};
+    tasks[2] = (EDF_task){T3_D, Task3Handle, 0, Task3, "Task3"};
+    tasks[3] = (EDF_task){T4_D, Task4Handle, 0, Task4, "Task4"};
+
+    setTasksPriorities();
+    sortTasks();
+
+    for (int i = 0; i < NUM_TASKS; i++) {
+        xTaskCreate(tasks[i].task, tasks[i].name, configMINIMAL_STACK_SIZE, NULL, tasks[i].priority, &tasks[i].handle);
+    }
+}
 
 void setup() 
 {
@@ -122,9 +205,8 @@ void setup()
 	xOneShotStarted = xTimerStart( xOneShotTimer, 0 );
 
 	xTaskCreate(edf,"EDF", configMINIMAL_STACK_SIZE, NULL, configMAX_PRIORITIES-1, &EDFHandle);
-	xTaskCreate(Task2,"Task2", configMINIMAL_STACK_SIZE, NULL, 4, &Task2Handle);
-	xTaskCreate(Task3,"Task3", configMINIMAL_STACK_SIZE, NULL, 3, &Task3Handle);
-	xTaskCreate(Task4,"Task4", configMINIMAL_STACK_SIZE, NULL, 2, &Task4Handle);
+
+    initTasks();
 
 	// Now the task scheduler, which takes over control of scheduling individual tasks, is automatically started for this port.
 	// Other ports require vTaskStartScheduler() at this point;  
@@ -142,6 +224,35 @@ void edf(void *pvParameters)  // This is a task.
 
 	TickType_t xLastWakeTime;
 	xLastWakeTime = 0;//xTaskGetTickCount();
+    
+    for (;;) 
+    {
+        // check if priorities have changed and sort them if they have
+        // we know that the priority of a task is inverserly proportional to its absolute deadline 
+        // so if a task has a higher deadline than another, it should have a lower priority
+        // if a task has a lower deadline than another, it should have a higher priority
+        TickType_t maxDeadline = calculateMaxDeadline();
+        for (int i = 0; i < NUM_TASKS; i++) {
+            unsigned long priority = calculateTaskPriority(tasks[i].deadline, maxDeadline);
+            if (priority != tasks[i].priority) {
+                tasks[i].priority = priority;
+                vTaskPrioritySet(tasks[i].handle, tasks[i].priority);
+                sortTasks();
+                break;
+            }
+        }
+
+
+      vTaskDelayUntil( &xLastWakeTime, pdMS_TO_TICKS(EDF) );
+    }
+}
+
+void Task1(void *pvParameters)  // This is a task.
+{
+	(void) pvParameters;
+
+	TickType_t xLastWakeTime;
+	xLastWakeTime = 0;//xTaskGetTickCount();
 
 	for (;;) // A Task shall never return or exit.
 	{  
@@ -149,7 +260,7 @@ void edf(void *pvParameters)  // This is a task.
       digitalWrite(LED11,led11_state);
       str_compute(C1);
 
-      vTaskDelayUntil( &xLastWakeTime, pdMS_TO_TICKS(T1) );
+      vTaskDelayUntil( &xLastWakeTime, pdMS_TO_TICKS(T1_P) );
   	}
 }
 
@@ -167,7 +278,7 @@ void Task2(void *pvParameters)  // This is a task.
       digitalWrite(LED12,led12_state);
       str_compute(C2);
 
-      vTaskDelayUntil( &xLastWakeTime, pdMS_TO_TICKS(T2));
+      vTaskDelayUntil( &xLastWakeTime, pdMS_TO_TICKS(T2_P));
   	}
 }
 
@@ -184,7 +295,7 @@ void Task3(void *pvParameters)  // This is a task.
       digitalWrite(LED13,led13_state);
       str_compute(C3);
 
-      vTaskDelayUntil( &xLastWakeTime, pdMS_TO_TICKS(T3));
+      vTaskDelayUntil( &xLastWakeTime, pdMS_TO_TICKS(T3_P));
   	}
 }
 
@@ -201,7 +312,7 @@ void Task4(void *pvParameters)  // This is a task.
       digitalWrite(LED14,led14_state);
       str_compute(C4);
 	  
-      vTaskDelayUntil( &xLastWakeTime, pdMS_TO_TICKS(T4));
+      vTaskDelayUntil( &xLastWakeTime, pdMS_TO_TICKS(T4_P));
 	}
 }
 
