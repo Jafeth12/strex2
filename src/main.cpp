@@ -229,11 +229,6 @@ void updateRelativeDeadline(TaskHandle_t handle, TickType_t lastWakeTime, TickTy
     }
 }
 
-void vApplicationTaskSwitchHook( void ) {
-    // Called when a task switch is performed.  Functionality here is down to the user.
-    // vPrintString( "Task switch!\n" );
-}
-
 void edf(void *pvParameters)  // This is a task.
 {
 	(void) pvParameters;
