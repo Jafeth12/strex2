@@ -22,6 +22,7 @@
 typedef struct EDF_task
 {
     TickType_t deadline;
+    TickType_t relative_deadline;
     TaskHandle_t handle;
     unsigned long priority;
     void (*task)(void *pvParameters);
@@ -151,9 +152,9 @@ int compareTasks(const void *a, const void *b) {
     EDF_task *taskA = (EDF_task *)a;
     EDF_task *taskB = (EDF_task *)b;
 
-    if (taskA->deadline < taskB->deadline) {
+    if (taskA->relative_deadline < taskB->relative_deadline) {
         return -1;
-    } else if (taskA->deadline > taskB->deadline) {
+    } else if (taskA->relative_deadline > taskB->relative_deadline) {
         return 1;
     } else {
         return 0;
@@ -165,13 +166,13 @@ void sortTasks() {
 }
 
 void initTasks() {
-    tasks[0] = (EDF_task){T1_D, Task1Handle, 0, Task1, "Task1"};
-    tasks[1] = (EDF_task){T2_D, Task2Handle, 0, Task2, "Task2"};
-    tasks[2] = (EDF_task){T3_D, Task3Handle, 0, Task3, "Task3"};
-    tasks[3] = (EDF_task){T4_D, Task4Handle, 0, Task4, "Task4"};
+    tasks[0] = (EDF_task){T1_D, 0, Task1Handle, 0, Task1, "Task1"};
+    tasks[1] = (EDF_task){T2_D, 0, Task2Handle, 0, Task2, "Task2"};
+    tasks[2] = (EDF_task){T3_D, 0, Task3Handle, 0, Task3, "Task3"};
+    tasks[3] = (EDF_task){T4_D, 0, Task4Handle, 0, Task4, "Task4"};
 
     setTasksPriorities();
-    sortTasks();
+    // no hace falta sorting porque ya estan en orden inicialmente.
 
     for (int i = 0; i < NUM_TASKS; i++) {
         xTaskCreate(tasks[i].task, tasks[i].name, configMINIMAL_STACK_SIZE, NULL, tasks[i].priority, &tasks[i].handle);
@@ -218,6 +219,21 @@ void loop()
 	;
 }
 
+void updateRelativeDeadline(TaskHandle_t handle, TickType_t lastWakeTime, TickType_t deadline) {
+    TickType_t tick = xTaskGetTickCount();
+    for (int i = 0; i < NUM_TASKS; i++) {
+        if (tasks[i].handle == handle) {
+            tasks[i].relative_deadline = (lastWakeTime + deadline) - tick;
+            break;
+        }
+    }
+}
+
+void vApplicationTaskSwitchHook( void ) {
+    // Called when a task switch is performed.  Functionality here is down to the user.
+    // vPrintString( "Task switch!\n" );
+}
+
 void edf(void *pvParameters)  // This is a task.
 {
 	(void) pvParameters;
@@ -227,22 +243,14 @@ void edf(void *pvParameters)  // This is a task.
     
     for (;;) 
     {
-        // check if priorities have changed and sort them if they have
-        // we know that the priority of a task is inverserly proportional to its absolute deadline 
-        // so if a task has a higher deadline than another, it should have a lower priority
-        // if a task has a lower deadline than another, it should have a higher priority
-        TickType_t maxDeadline = calculateMaxDeadline();
+        sortTasks();
+
+        // update their priorities based on their position in the sorted array
         for (int i = 0; i < NUM_TASKS; i++) {
-            unsigned long priority = calculateTaskPriority(tasks[i].deadline, maxDeadline);
-            if (priority != tasks[i].priority) {
-                tasks[i].priority = priority;
-                vTaskPrioritySet(tasks[i].handle, tasks[i].priority);
-                sortTasks();
-                break;
-            }
+            tasks[i].priority = configMAX_PRIORITIES - i - 2; // -2 because the EDF task is also a task
+            vTaskPrioritySet(tasks[i].handle, tasks[i].priority);
         }
-
-
+        
       vTaskDelayUntil( &xLastWakeTime, pdMS_TO_TICKS(EDF) );
     }
 }
@@ -256,6 +264,7 @@ void Task1(void *pvParameters)  // This is a task.
 
 	for (;;) // A Task shall never return or exit.
 	{  
+        updateRelativeDeadline(xTaskGetCurrentTaskHandle(), xLastWakeTime, T1_D);
       led11_state= led11_state^1;
       digitalWrite(LED11,led11_state);
       str_compute(C1);
@@ -274,6 +283,7 @@ void Task2(void *pvParameters)  // This is a task.
 
 	for (;;) // A Task shall never return or exit.
 	{  
+        updateRelativeDeadline(xTaskGetCurrentTaskHandle(), xLastWakeTime, T2_D);
       led12_state= led12_state^1;
       digitalWrite(LED12,led12_state);
       str_compute(C2);
@@ -291,6 +301,7 @@ void Task3(void *pvParameters)  // This is a task.
 
 	for (;;) // A Task shall never return or exit.
 	{  
+        updateRelativeDeadline(xTaskGetCurrentTaskHandle(), xLastWakeTime, T3_D);
       led13_state= led13_state^1;
       digitalWrite(LED13,led13_state);
       str_compute(C3);
@@ -308,6 +319,7 @@ void Task4(void *pvParameters)  // This is a task.
 
 	for (;;) // A Task shall never return or exit.
 	{  
+        updateRelativeDeadline(xTaskGetCurrentTaskHandle(), xLastWakeTime, T4_D);
       led14_state= led14_state^1;
       digitalWrite(LED14,led14_state);
       str_compute(C4);
